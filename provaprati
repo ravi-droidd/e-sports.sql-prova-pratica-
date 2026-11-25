@@ -1,0 +1,272 @@
+create table jogadores (
+    id_jogador serial primary key,
+    nickname varchar(50) not null unique,
+    email varchar(100) not null unique,
+    senha varchar(100) not null,
+    status varchar(20) not null default 'ativo',
+    data_cadastro timestamp default current_timestamp,
+    check (status in ('ativo', 'inativo', 'banido'))
+)
+
+ create table modalidades (
+    id_modalidade serial primary key,
+    nome varchar(100) not null unique,
+    genero varchar(100),
+    qtd_jogadores_equipe int not null,
+    constraint quantidade_jogadores
+    check (qtd_jogadores_equipe > 0)
+ )  
+
+
+create table torneios (
+    id_torneio serial primary key,
+    nome varchar(100) not null,
+    descricao text,
+    data_inicio date not null,
+    data_fim date not null,
+    check (data_fim >= data_inicio)
+)
+create table inscricoes (
+    id_inscricao serial primary key,
+    id_jogador int not null,
+    id_torneio int not null,
+    data_inscricao timestamp default current_timestamp,
+
+    foreign key (id_jogador) references jogadores(id_jogador),
+    foreign key (id_torneio) references torneios(id_torneio),
+
+    unique (id_jogador, id_torneio)
+)
+
+create table partidas (
+    id_partida serial primary key,
+    titulo varchar(100) not null,
+    id_modalidade int not null,
+    id_jogador int not null,
+    id_torneio int not null,
+    data_agendamento timestamp not null,
+    data_criacao timestamp,
+    status varchar(20) not null default 'agendada',
+
+    foreign key (id_modalidade) references modalidades(id_modalidade),
+    foreign key (id_jogador) references jogadores(id_jogador),
+    foreign key (id_torneio) references torneios(id_torneio),
+
+    check (status in ('agendada', 'em andamento', 'finalizada', 'cancelada'))
+)
+
+create table historico_partidas (
+    id_historico serial primary key,
+    id_partida int not null,
+    descricao text not null,
+    data_registro timestamp default current_timestamp,
+
+    foreign key (id_partida) references partidas(id_partida)
+)
+
+insert into jogadores (nickname, email, senha, status) values
+('Ravi00', 'ravi@email.com', '123456', 'ativo'),
+('dudu06', 'dudu@email.com', '654321', 'ativo'),
+('arthurzelo22', 'arthurzelo@email.com', 'abcdef', 'inativo')
+;
+
+insert into modalidades (nome, genero, qtd_jogadores_equipe) values
+('Counter-Strike 2', 'FPS', 5),
+('League of Legends', 'MOBA', 5),
+('Valorant', 'FPS', 5);
+
+
+insert into torneios (nome, descricao, data_inicio, data_fim) values
+('Torneio de Verão', 'Campeonato de jogos competitivos', '2026-12-01', '2026-12-10'),
+('Copa E-sports', 'Competição entre jogadores', '2027-01-10', '2027-01-20'),
+('Desafio Gamer', 'Torneio de modalidades variadas', '2027-02-01', '2027-02-15')
+
+
+insert into inscricoes (id_jogador, id_torneio) values
+(
+    (select id_jogador from jogadores where nickname = 'Ravi00'),
+    (select id_torneio from torneios where nome = 'Torneio de Verão')),
+
+   ((select id_jogador from jogadores where nickname = 'dudu06'),
+    (select id_torneio from torneios where nome = 'Torneio de Verão')),
+
+((select id_jogador from jogadores where nickname = 'Ravi00'),
+    (select id_torneio from torneios where nome = 'Copa E-sports'))
+
+
+create or replace function fn_validar_partida()
+returns trigger as $$
+begin
+
+    if not exists (
+        select 1
+        from jogadores
+        where id_jogador = new.id_jogador
+        and status = 'ativo'
+    ) then
+        raise exception 'o jogador não existe ou não está ativo.';
+    end if;
+
+    new.data_criacao := current_timestamp;
+
+    return new;
+
+end;
+$$ language plpgsql;
+
+
+
+
+create or replace function fn_registrar_historico()
+returns trigger as $$
+begin
+
+    insert into historico_partidas (
+        id_partida,
+        descricao
+    )
+    values (
+        new.id_partida,
+        'nova partida cadastrada: ' || new.titulo
+    );
+
+    return new;
+
+end;
+$$ language plpgsql;
+
+
+
+
+create trigger trg_validar_partida
+before insert on partidas
+for each row
+execute function fn_validar_partida();
+
+
+create trigger trg_historico_partida
+after insert on partidas
+for each row
+execute function fn_registrar_historico();
+
+
+
+
+insert into partidas (
+    titulo,
+    id_modalidade,
+    id_jogador,
+    id_torneio,
+    data_agendamento,
+    status
+) values
+
+(
+    'Ravi00 vs dudu06',
+    (select id_modalidade from modalidades where nome = 'Counter-Strike 2'),
+    (select id_jogador from jogadores where nickname = 'Ravi00'),
+    (select id_torneio from torneios where nome = 'Torneio de Verão'),
+    '2026-12-02 15:00:00',
+    'agendada'
+),
+
+(
+    'dudu06 vs Ravi00',
+    (select id_modalidade from modalidades where nome = 'League of Legends'),
+    (select id_jogador from jogadores where nickname = 'dudu06'),
+    (select id_torneio from torneios where nome = 'Torneio de Verão'),
+    '2026-12-03 16:00:00',
+    'agendada'
+),
+
+(
+    'Ravi00 vs dudu06',
+    (select id_modalidade from modalidades where nome = 'Valorant'),
+    (select id_jogador from jogadores where nickname = 'Ravi00'),
+    (select id_torneio from torneios where nome = 'Copa E-sports'),
+    '2027-01-12 18:00:00',
+    'agendada'
+);
+
+
+
+create or replace view vw_painel_principal as
+select
+    j.nickname,
+    p.titulo as titulo_partida,
+    m.genero as categoria,
+    p.data_agendamento as data_partida,
+    p.status
+from partidas p
+inner join jogadores j
+    on p.id_jogador = j.id_jogador
+inner join modalidades m
+    on p.id_modalidade = m.id_modalidade;
+
+
+
+create or replace function fn_buscar_jogadores(termo text)
+returns table (
+    id_jogador int,
+    nickname varchar(50),
+    email varchar(100),
+    status varchar(20)
+)
+as $$
+begin
+
+    return query
+    select
+        j.id_jogador,
+        j.nickname,
+        j.email,
+        j.status
+    from jogadores j
+    where j.nickname ilike '%' || termo || '%'
+       or j.email ilike '%' || termo || '%';
+
+end;
+$$ language plpgsql;
+
+
+
+
+create or replace view vw_cronograma_partidas as
+select
+    p.id_partida,
+    p.titulo,
+    j.nickname,
+    p.data_agendamento,
+    p.status,
+    (p.data_agendamento::date - current_date) as dias_restantes
+from partidas p
+inner join jogadores j
+    on p.id_jogador = j.id_jogador
+order by p.data_agendamento asc
+
+
+
+
+-- visualizar painel principal
+select * from vw_painel_principal
+
+-- buscar jogador pelo nickname ou e-mail
+select * from fn_buscar_jogadores('Ravi')
+
+-- visualizar cronograma de partidas
+select * from vw_cronograma_partidas
+
+-- visualizar histórico das partidas
+select * from historico_partidas
+
+-- visualizar jogadores
+select * from jogadores
+
+-- visualizar torneios
+select * from torneios
+
+-- visualizar modalidades
+select * from modalidades
+
+-- visualizar inscrições
+select * from inscricoes
